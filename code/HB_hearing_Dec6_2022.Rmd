@@ -127,15 +127,29 @@ aep_mults_wo <- all_cases_rec[buildingid %in% mults_gen$buildingid & isaep %in% 
 
 #### AEP
 -- How many buildings have been through ERP more than once and end up in AEP?
--- How many buildings go through AEP more than once?
 ```{r echo=FALSE}
 aep <- fread("https://data.cityofnewyork.us/resource/hcir-3275.csv?$limit=999999")
 aep[, aep_start_date:= as.Date(aep_start_date)]
 aep[, aep_discharge_date := as.Date(discharge_date)]
 
+aep[building_id %in% mults_gen$buildingid, .N]
+aep[, Duration:= as.numeric(aep_discharge_date-aep_start_date)]
 
 
 ```
+
+-- How long do these buildings tend to stay in AEP
+```{r echo=FALSE}
+summary(aep$Duration)
+```
+
+-- How many buildings go through AEP more than once?
+-- What is the distribution of the duration in AEP for buildings? 
+```{r echo=FALSE}
+
+```
+
+
 
 #### Housing maintenance code violations 
 -- How many for each class, status, whether the violation is rent impairing 
@@ -194,7 +208,7 @@ ggplot(hist_dt, aes(x=n_per_bdg)) + geom_histogram() + theme_bw() + facet_wrap(~
 ```
 
 #### Where are the buildings that are in the 50th percentile (greater than 233 total violations and have been through litigation)
-```{r echo=FALSE}
+```{r echo=FALSE, cache=TRUE}
 library(leaflet)
 library(councildown)
 library(viridis)
@@ -219,7 +233,10 @@ leaflet(data = map_dt) %>%
              weight = 5, 
              color = ~pal(n_per_bdg_class)) %>% 
   addLayersControl(overlayGroups = ~unname(class), position = "bottomright", options = layersControlOptions(collapsed = FALSE, sortLayers = "false")) %>% 
-  setView(-73.88099670410158,40.72540497175607,  zoom = 10.5)
+  setView(-73.88099670410158,40.72540497175607,  zoom = 10.5) %>% 
+  addLegend(position ="bottomright", 
+            pal = pal, 
+            values = map_dt$n_per_bdg_class)
 ```
 
 
