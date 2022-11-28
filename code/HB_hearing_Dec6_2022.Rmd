@@ -1,0 +1,199 @@
+---
+title: "Code Enforcement 11/15/22"
+author: "Brook Frye"
+date: "11/15/2022"
+output: html_document
+---
+
+
+### Overall, how many buildings have been through these programs, 2017-present
+-- ERP via open work orders and handyman work orders 
+  -- OF  these, how many have gone through AEP (very few for buildings fixed internally)
+
+-- How many HMCV violations across the city, which buildings have the most
+-- Housing litigation repeats
+-- Which buildings have gone thru multiple programs
+---- is there any real reason why this would be?
+
+
+####  Number of buildings that have gone through ERP via handyman work orders -- repairs carried out by agency staff
+```{r echo=FALSE}
+library(data.table)
+library(ggplot2)
+library(DT)
+# carried out by agency staff
+hwo <- fread("https://data.cityofnewyork.us/resource/sbnd-xujn.csv?$limit=999999")
+
+# subset to 2017-present
+hwo[, hwocreatedate:= as.Date(hwocreatedate)]
+hwo[, year_create := year(hwocreatedate)]
+hwo_sub <- hwo[year_create>=2017, ]
+hwo_sub[, .N, by ="year_create"][order(year_create, decreasing = TRUE)]
+# not useful to do by day
+# hwo_sub[, charge_per_day := sum(chargeamount), by = "hwocreatedate"]
+# hwo_sub[, n_per_year := .N, by = "hwocreatedate"]
+
+hwo_sub[, n_per_year_boro := .N, by = .(boro, year_create)]
+hwo_sub[, charge_per_year_boro:= sum(chargeamount), by = .(boro, year_create)]
+hwo_sub[, AEP := ifelse(isaep=="AEP", 1, 0), by=.(boro, year_create)]
+hwo_sub[, AEP:= sum(AEP), by = .(boro, year_create)]
+
+boro_year <- hwo_sub[,.(Borough=boro, Year=as.factor(year_create), N=as.factor(n_per_year_boro), `Total Charge` = scales::dollar(charge_per_year_boro ), AEP)]
+boro_year[, prop_aep := round(as.numeric(AEP)/as.numeric(N), 2)]
+
+boro_year <- unique(boro_year)
+
+# how many per year grouped by boro
+ggplot(boro_year, aes(x=Year, y=N, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Number of Buildings")
+
+# prop AEP
+ggplot(boro_year, aes(x=Year, y=prop_aep, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Number of Buildings")
+
+# how much $ per year
+ggplot(boro_year, aes(x=Year, y=boro_year$`Total Charge`, fill=Borough)) +geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Charges") + ylab("Total Charges")
+
+DT::datatable(boro_year)
+
+
+```
+
+
+
+### ERP open market orders (not handled by agency staff)
+```{r echo=FALSE}
+
+omo <- fread("https://data.cityofnewyork.us/resource/mdbu-nrqn.csv?$limit=9999999")
+# subset to 2017-present
+omo[,omocreatedate:= as.Date(omocreatedate)]
+omo[, year_create := year(omocreatedate)]
+omo_sub <- omo[year_create>=2017, ]
+omo_sub[, .N, by ="year_create"][order(year_create, decreasing = TRUE)]
+omo_sub[, omo_award_tot := sum(omoawardamount), by = .(boro, year_create)]
+omo_sub[, n_per_year_boro := .N, by = .(boro, year_create)]
+omo_sub[, AEP := ifelse(isaep=="AEP", 1, 0), by=.(boro, year_create)]
+omo_sub[, AEP:= sum(AEP), by = .(boro, year_create)]
+
+
+boro_year_omo <- omo_sub[,.(Borough=boro, Year=as.factor(year_create), N=as.factor(n_per_year_boro), `Total Charge` = scales::dollar(omo_award_tot), AEP)]
+boro_year_omo <- unique(boro_year_omo)
+boro_year_omo[, prop_aep := round(as.numeric(AEP)/as.numeric(N), 2)]
+
+# total number 
+ggplot(boro_year_omo, aes(x=Year, y=N, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Hired outside agency, Number of Buildings") 
+
+# proportion that are AEP
+ggplot(boro_year_omo, aes(x=Year, y=boro_year_omo$prop_aep, fill=Borough)) +geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled externally, % AEP") + ylab("% AEP")
+
+# how much $ per year total
+ggplot(boro_year_omo, aes(x=Year, y=boro_year_omo$`Total Charge`, fill=Borough)) +geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Charges") + ylab("Total Charges")
+
+# how many completed?
+
+DT::datatable(boro_year_omo)
+```
+
+
+### how many in total, any buildings that have gone through both?
+```{r echo=FALSE}
+hwo[, workorder := "hw"]
+hwo[, descript := hwodescription]
+omo[,workorder := "om"]
+omo[, descript:=omodescription]
+
+
+all_cases <- rbind(hwo, omo, fill=TRUE)
+all_cases_sub <- all_cases[year_create>=2017,.(buildingid,descript, workorder, year_create)]
+
+all_cases_sub <- unique(all_cases_sub)
+both_gen <- all_cases_sub[, .(un_wo = unique(workorder)), by = .(buildingid)]
+both_gen <- unique(both_gen)
+mult_id <- both_gen[,.N, by = .(buildingid)][order(N, decreasing = TRUE)][N==2, .(buildingid)]
+
+mults_gen <- all_cases_sub[buildingid %in% mult_id$buildingid, ]
+mults_gen <- unique(mults_gen)
+
+n_wo <- mults_gen[,.N, by="buildingid" ][order(N, decreasing = TRUE)]
+ggplot(n_wo, aes(x=N)) + geom_histogram() + theme_bw()
+
+
+# test
+# all_cases_sub[buildingid %in% 165535, ]
+
+both_year <- all_cases_sub[, unique(workorder), by = .(buildingid, year_create)]
+
+
+
+
+
+
+# buildings that have been in both?
+# buildings that have had ERPs multiple times
+
+
+omo_sub[buildingid %in% hwo_sub$buildingid, .N, by = "buildingid"][order(N, decreasing = TRUE)]
+```
+
+
+
+
+
+```{r}
+
+```
+
+### Housing maintenance code violations 
+-- How many for each type, each year by borough and council district
+```{r echo=FALSE}
+
+```
+
+
+
+
+### Housing litigation data
+```{r echo=FALSE}
+# how many since 2017
+hl <- fread("https://data.cityofnewyork.us/resource/59kj-x8nc.csv?$where=caseopendate>='2017-01-01'&$limit=999999999999")
+
+hl[, year_open := year(as.Date(caseopendate))]
+hl <- hl[!year_open %in% "2030", ]
+
+# how many judgement
+hl[, .N, by = c("casejudgement", "year_open", "casestatus")][order(year_open, decreasing = TRUE)]
+
+# for the yes findings,  what is the nature of the complaint 
+
+# for the no findings, what is the nature of the complaint
+
+```
+
+
+
+### heat sensor program
+```{r echo=FALSE}
+
+```
+
+```{r echo=FALSE, include=FALSE, eval=FALSE}
+
+
+# scratch 
+
+## how many are in aep
+omo_dt[, n_year := .N, by = "year_create"]
+
+year_aep <- omo_dt[isaep %in% "AEP", .(.N, n_year), by = "year_create"][, .(year_create, prop_aep =N/n_year)]
+
+# what is the prop of AEPs that are ERP across years
+year_aep <- unique(year_aep)
+
+# hwo_dt <- hwo_sub[,.(n_per_day, charge_per_day, year_create, hwocreatedate, boro, n_per_year_boro)]
+# hwo_dt <- unique(hwo_dt)
+# hwo_dt[, Year := as.factor(year_create)]
+# hwo_dt[, day_of_year  := as.numeric(format(as.Date(hwocreatedate), "%j"))]
+
+
+
+
+```
+
