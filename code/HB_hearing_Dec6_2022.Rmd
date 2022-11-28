@@ -6,16 +6,6 @@ output: html_document
 ---
 
 
-### Overall, how many buildings have been through these programs, 2017-present
--- ERP via open work orders and handyman work orders 
-  -- OF  these, how many have gone through AEP (very few for buildings fixed internally)
-
--- How many HMCV violations across the city, which buildings have the most
--- Housing litigation repeats
--- Which buildings have gone thru multiple programs
----- is there any real reason why this would be?
-
-
 ####  Number of buildings that have gone through ERP via handyman work orders -- repairs carried out by agency staff
 ```{r echo=FALSE}
 library(data.table)
@@ -27,7 +17,7 @@ hwo <- fread("https://data.cityofnewyork.us/resource/sbnd-xujn.csv?$limit=999999
 # subset to 2017-present
 hwo[, hwocreatedate:= as.Date(hwocreatedate)]
 hwo[, year_create := year(hwocreatedate)]
-hwo_sub <- hwo[year_create>=2017, ]
+hwo_sub <- hwo[year_create>=2017 & !hwostatusreason %in% c("Work Too Extensive for HWO", "Duplicate OMO", "Made Payment OMO", "OMO Completed"), ]
 hwo_sub[, .N, by ="year_create"][order(year_create, decreasing = TRUE)]
 # not useful to do by day
 # hwo_sub[, charge_per_day := sum(chargeamount), by = "hwocreatedate"]
@@ -47,19 +37,20 @@ boro_year <- unique(boro_year)
 ggplot(boro_year, aes(x=Year, y=N, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Number of Buildings")
 
 # prop AEP
-ggplot(boro_year, aes(x=Year, y=prop_aep, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Number of Buildings")
+# ggplot(boro_year, aes(x=Year, y=prop_aep, fill=Borough)) + geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Number of Buildings")
 
 # how much $ per year
 ggplot(boro_year, aes(x=Year, y=boro_year$`Total Charge`, fill=Borough)) +geom_col(position = "dodge") + theme_minimal() +  ggtitle("ERP Work Orders: Handled internally, Charges") + ylab("Total Charges")
 
 DT::datatable(boro_year)
+DT::datatable(hwo_sub[,.N, by =.(Work=worktypegeneral, Status=hwostatusreason)][order(N, decreasing = TRUE)])
 
 
 ```
 
 
-
-### ERP open market orders (not handled by agency staff)
+#### ERP open market orders (not handled by agency staff)
+-- total open market orders since 2017:
 ```{r echo=FALSE}
 
 omo <- fread("https://data.cityofnewyork.us/resource/mdbu-nrqn.csv?$limit=9999999")
@@ -90,10 +81,13 @@ ggplot(boro_year_omo, aes(x=Year, y=boro_year_omo$`Total Charge`, fill=Borough))
 # how many completed?
 
 DT::datatable(boro_year_omo)
+DT::datatable(omo_sub[, .N, by=.(Work=worktypegeneral, Status=omostatusreason)][order(N, decreasing = TRUE)])
 ```
 
 
-### how many in total, any buildings that have gone through both?
+#### How many in total, any buildings that have gone through both open market and handyman?
+-- There are 9,123 buildings that have gone through both handyman work orders and open market work orders since 201
+-- Of these buildings, 7,291 have gone through AEP
 ```{r echo=FALSE}
 hwo[, workorder := "hw"]
 hwo[, descript := hwodescription]
@@ -102,7 +96,8 @@ omo[, descript:=omodescription]
 
 
 all_cases <- rbind(hwo, omo, fill=TRUE)
-all_cases_sub <- all_cases[year_create>=2017,.(buildingid,descript, workorder, year_create)]
+all_cases_rec <- all_cases[year_create>=2017 & !hwostatusreason %in% c("Work Too Extensive for HWO", "Duplicate OMO", "Made Payment OMO", "OMO Completed"),]
+all_cases_sub <- all_cases_rec[,.(buildingid,descript, workorder, year_create)]
 
 all_cases_sub <- unique(all_cases_sub)
 both_gen <- all_cases_sub[, .(un_wo = unique(workorder)), by = .(buildingid)]
@@ -112,45 +107,61 @@ mult_id <- both_gen[,.N, by = .(buildingid)][order(N, decreasing = TRUE)][N==2, 
 mults_gen <- all_cases_sub[buildingid %in% mult_id$buildingid, ]
 mults_gen <- unique(mults_gen)
 
-n_wo <- mults_gen[,.N, by="buildingid" ][order(N, decreasing = TRUE)]
-ggplot(n_wo, aes(x=N)) + geom_histogram() + theme_bw()
+n_wo <- mults_gen[,.N, by="buildingid"]
+
+# test 
+#  all_cases_rec[buildingid %in% 115724, ]
 
 
-# test
-# all_cases_sub[buildingid %in% 165535, ]
+# dist
+ggplot(n_wo, aes(x=N)) + geom_histogram() + theme_bw() + xlab("Number of times ERP")
+all_cases_rec[buildingid %in% mults_gen$buildingid, .N, by = "isaep"]
 
-both_year <- all_cases_sub[, unique(workorder), by = .(buildingid, year_create)]
+aep_mults_wo <- all_cases_rec[buildingid %in% mults_gen$buildingid & isaep %in% "AEP", ]
 
-
-
-
-
-
-# buildings that have been in both?
-# buildings that have had ERPs multiple times
+# for these buildings, what is the most common type of work?
 
 
-omo_sub[buildingid %in% hwo_sub$buildingid, .N, by = "buildingid"][order(N, decreasing = TRUE)]
 ```
 
 
-
-
-
-```{r}
-
-```
-
-### Housing maintenance code violations 
--- How many for each type, each year by borough and council district
+#### AEP
+-- How many buildings have been through ERP more than once and end up in AEP?
+-- How many buildings go through AEP more than once?
 ```{r echo=FALSE}
+aep <- fread("https://data.cityofnewyork.us/resource/hcir-3275.csv?$limit=999999")
+aep[, aep_start_date:= as.Date(aep_start_date)]
+aep[, aep_discharge_date := as.Date(discharge_date)]
+
+
+
+```
+
+#### Housing maintenance code violations 
+-- How many for each class, status, whether the violation is rent impairing 
+```{r echo=FALSE}
+hmv <- fread("https://data.cityofnewyork.us/resource/wvxf-dwi5.csv?$limit=9999999999999")
+
+# hmv <- fread("hmv_sub.csv")
+hmv[, novissueddate := as.Date(novissueddate)]
+hmv[, currentstatusdate := as.Date(currentstatusdate)]
+hmv_sub <- hmv[novissueddate>=as.Date("2017-01-01"), ]
+
+hmv_sub[boroid %in% 4, Borough := "Queens"]
+hmv_sub[boroid %in% 3, Borough := "Brooklyn"]
+hmv_sub[boroid %in% 1, Borough := "Manhattan"]
+hmv_sub[boroid %in% 2,Borough := "Bronx"]
+hmv_sub[boroid %in% 5,Borough := "Staten Island"]
+
+DT::datatable(hmv_sub[,.N, by =.(Status = currentstatus, Class=class, `Rent Impairing` =rentimpairing)])
+
+# write.csv(hmv_sub, "hmv_sub.csv")
 
 ```
 
 
-
-
-### Housing litigation data
+#### Housing litigation data
+-- What are the case statuses, judgements by year?
 ```{r echo=FALSE}
 # how many since 2017
 hl <- fread("https://data.cityofnewyork.us/resource/59kj-x8nc.csv?$where=caseopendate>='2017-01-01'&$limit=999999999999")
@@ -158,25 +169,61 @@ hl <- fread("https://data.cityofnewyork.us/resource/59kj-x8nc.csv?$where=caseope
 hl[, year_open := year(as.Date(caseopendate))]
 hl <- hl[!year_open %in% "2030", ]
 
-# how many judgement
-hl[, .N, by = c("casejudgement", "year_open", "casestatus")][order(year_open, decreasing = TRUE)]
-
-# for the yes findings,  what is the nature of the complaint 
-
-# for the no findings, what is the nature of the complaint
+# how many, judgement, status
+DT::datatable(hl[, .N, by = c("casejudgement", "year_open", "casestatus")])
 
 ```
 
 
+#### Of the buildings that have gone through housing litigation, how many HMCV do they have?
+```{r echo=TRUE}
+hmv_hl <- hmv_sub[buildingid %in% hl$buildingid, .(violationid, buildingid, violationstatus, currentstatusdate, currentstatus, class, latitude, longitude)]
 
-### heat sensor program
+hl_map <- hl[buildingid %in% hmv_sub$buildingid, .(respondent, Location=paste(housenumber, streetname, nta), buildingid)]
+
+
+
+hmv_hl <- unique(hmv_hl)
+hmv_hl[,n_per_bdg:=.N, by = .(buildingid)]
+hmv_hl[,n_per_bdg_class:=.N, by = .(buildingid, class)]
+summary(hmv_hl$n_per_bdg)
+hist_dt <- hmv_hl[, .(buildingid, n_per_bdg, class)]
+hist_dt <- unique(hist_dt)
+ggplot(hist_dt, aes(x=n_per_bdg)) + geom_histogram() + theme_bw() + facet_wrap(~class) +ggtitle("Number of Buildings vs Number of A, B, C violations") + xlab("Number of Vilations Per Building") + ylab("Number of Buildings")
+
+```
+
+#### Where are the buildings that are in the 50th percentile (greater than 233 total violations and have been through litigation)
 ```{r echo=FALSE}
+library(leaflet)
+library(councildown)
+library(viridis)
 
+hmv_map <- cbind(hl_map, hmv_hl)
+map_dt <- hmv_map[n_per_bdg>233,.(latitude, longitude, n_per_bdg_class, class,respondent, Location)]
+map_dt <- unique(map_dt)
+
+pal = colorNumeric(
+  palette = "viridis",
+  domain = map_dt$n_per_bdg_class, 
+  na.color = "Black"
+)
+
+# let's use leaflet 
+leaflet(data = map_dt) %>% 
+  addCouncilStyle() %>% 
+  addCircles(lng = ~longitude, 
+             lat = ~latitude,
+             group = ~unname(class), 
+             #popup = ~paste(site), 
+             weight = 5, 
+             color = ~pal(n_per_bdg_class)) %>% 
+  addLayersControl(overlayGroups = ~unname(class), position = "bottomright", options = layersControlOptions(collapsed = FALSE, sortLayers = "false")) %>% 
+  setView(-73.88099670410158,40.72540497175607,  zoom = 10.5)
 ```
+
 
 ```{r echo=FALSE, include=FALSE, eval=FALSE}
-
-
 # scratch 
 
 ## how many are in aep
@@ -185,11 +232,7 @@ omo_dt[, n_year := .N, by = "year_create"]
 year_aep <- omo_dt[isaep %in% "AEP", .(.N, n_year), by = "year_create"][, .(year_create, prop_aep =N/n_year)]
 
 # what is the prop of AEPs that are ERP across years
-year_aep <- unique(year_aep)
 
-# hwo_dt <- hwo_sub[,.(n_per_day, charge_per_day, year_create, hwocreatedate, boro, n_per_year_boro)]
-# hwo_dt <- unique(hwo_dt)
-# hwo_dt[, Year := as.factor(year_create)]
 # hwo_dt[, day_of_year  := as.numeric(format(as.Date(hwocreatedate), "%j"))]
 
 
