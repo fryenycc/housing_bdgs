@@ -1,0 +1,68 @@
+---
+title: "ERP"
+author: "Brook Frye"
+date: "10/21/2022"
+output: html_document
+---
+
+
+#### ERP 
+***
+- [Repairs carried out by agency staff/internally, 2017 to present]
+```{r echo=FALSE}
+library(data.table)
+library(ggplot2)
+library(DT)
+library(sf)
+library(leaflet)
+library(councildown)
+library(dplyr)
+
+hwo <- fread("https://data.cityofnewyork.us/resource/sbnd-xujn.csv?$limit=999999")
+pluto <- fread("pluto_22v3.csv")
+cd_shp <- read_sf("~/Desktop/housing_builds/HB_TPT/data/input/nycc_shp")
+cd_shp$council_district <- cd_shp$coun_dist
+
+# how many buildings per council district
+pluto_sub <- pluto[,.(n_bdgs_cd = .N), by =.(council)]
+setnames(pluto_sub, "council", "council_district")
+
+# subset to 2017-present
+hwo[, hwocreatedate:= as.Date(hwocreatedate)]
+hwo[, year_create := year(hwocreatedate)]
+hwo_sub <- hwo[year_create>=2017, ]
+
+# for jose
+hwo_sub[,.N, by = "year_create"]
+hwo_sub[,.(total_charges=sum(chargeamount)), by = "year_create"][order(year_create, decreasing = TRUE)]
+
+# create total per day columns: N, charge
+hwo_sub_plut <- merge(hwo_sub, pluto_sub)
+hwo_sub_plut[, n_p_day := length(unique(hwocreatedate)), by = .(buildingid)]
+
+hwo_sub_plut[, n_per_year_cd := sum(n_p_day), by = .(council_district, year_create)]
+hwo_sub_plut[, charge_per_year_cd:= sum(chargeamount), by = .(council_district, year_create)]
+hwo_sub_plut[, prop_n:= n_per_year_cd/n_bdgs_cd]
+hwo_sub_plut[, charge_p_bdg:= charge_per_year_cd/n_bdgs_cd]
+
+mapdt <-  unique(hwo_sub_plut[!is.na(council_district),.(council_district, prop_n = round(prop_n, 2), charge_p_bdg=round(charge_p_bdg, 2), Year=year_create)]) %>% 
+  left_join(cd_shp, by = "council_district") %>% 
+  st_as_sf() %>% 
+  st_transform(crs='+proj=longlat +datum=WGS84')
+
+```
+
+
+- [Repairs carried out by since 2017]
+```{r echo=FALSE}
+
+omo <- fread("https://data.cityofnewyork.us/resource/mdbu-nrqn.csv?$limit=9999999")
+# subset to 2017-present
+omo[,omocreatedate:= as.Date(omocreatedate)]
+omo[, year_create := year(omocreatedate)]
+omo_sub <- omo[year_create>=2017, ]
+omo_sub[,.N, by = "year_create"]
+omo_sub[, .(total_charges=sum(omoawardamount)), by = "year_create"]
+
+
+```
