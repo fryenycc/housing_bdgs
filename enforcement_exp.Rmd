@@ -1,0 +1,591 @@
+---
+title: "Code Enforcement Data Exploration"
+author: "Brook Frye"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    theme: cosmo
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(data.table)
+library(ggplot2)
+library(DT)
+library(sf)
+library(leaflet)
+library(councildown)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+```
+
+#### ERP (2017-Present)
+- [Repairs carried out by agency staff/internally, 2017 to present]
+
+```{r echo=FALSE}
+
+
+hwo <- fread("https://data.cityofnewyork.us/resource/sbnd-xujn.csv?$limit=999999")
+pluto <- fread("~/Desktop/housing_builds/HB_TPT/pluto_22v3.csv")
+cd_shp <- read_sf("~/Desktop/housing_builds/HB_TPT/data/input/nycc_shp")
+cd_shp$council_district <- cd_shp$coun_dist
+
+# how many buildings per council district
+pluto_sub <- pluto[unitsres>1,.(n_bdgs_cd = .N), by =.(council)]
+setnames(pluto_sub, "council", "council_district")
+
+# subset to 2017-present
+hwo[, hwocreatedate:= as.Date(hwocreatedate)]
+hwo[, year_create := year(hwocreatedate)]
+hwo_sub <- hwo[year_create>=2017, ]
+
+# for jose
+# create total per day columns: N, charge
+hwo_sub_plut <- merge(hwo_sub, pluto_sub)
+hwo_sub_plut[, n_p_day := length(unique(hwocreatedate)), by = .(bbl)]
+
+hwo_sub_plut[, n_per_year_cd := sum(n_p_day), by = .(council_district, year_create)]
+hwo_sub_plut[, charge_per_year_cd:= sum(chargeamount), by = .(council_district, year_create)]
+hwo_sub_plut[, prop_n:= n_per_year_cd/n_bdgs_cd, by = .(council_district, year_create)]
+hwo_sub_plut[, charge_p_bdg:= charge_per_year_cd/n_bdgs_cd, by=.(council_district, year_create)]
+
+mapdt <-  unique(hwo_sub_plut[!is.na(council_district),.(council_district, prop_n = round(prop_n, 2), charge_p_bdg=round(charge_p_bdg, 2), total_cost = scales::dollar(charge_per_year_cd), Year=year_create, `Total Number` = n_per_year_cd)]) 
+
+map_sf <- mapdt %>% 
+  left_join(cd_shp, by = "council_district") %>% 
+  st_as_sf() %>% 
+  st_transform(crs='+proj=longlat +datum=WGS84')
+
+setDT(map_sf); map_sf[, Year := as.character(Year)]
+map_list <- split(map_sf, map_sf$Year) 
+map_list2 <- lapply(map_list,st_as_sf)
+
+```
+
+
+```{r echo=FALSE, eval=FALSE}
+# [Repairs carried out by Handyman Work Orders]
+pal <- colorNumeric("RdBu", map_sf$prop_n)
+leaflet() %>% 
+  addCouncilStyle() %>% 
+  addPolygons(data = map_list2[[1]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2017",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+   addPolygons(data = map_list2[[2]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2018",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+   addPolygons(data = map_list2[[3]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2019",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+   addPolygons(data = map_list2[[4]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2020",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+   addPolygons(data = map_list2[[5]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2021",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+    addPolygons(data = map_list2[[6]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Raw Total:", `Total Number`), 
+              group = "2022",
+              opacity = 1, 
+              fillOpacity = .2) %>%
+    addLegend(position = "bottomleft", pal = pal, values = map_sf$prop_n, title = "# HWO/<br>Total Bdgs") %>% 
+    addLayersControl(
+    baseGroups = c("2017", "2018","2019", "2020", "2021", "2022"),
+    options = layersControlOptions(collapsed = FALSE))
+  
+```
+
+#### [Cost per building via handyman work orders]
+```{r echo=FALSE}
+pal <- colorNumeric("RdBu", map_sf$charge_p_bdg, reverse=TRUE)
+
+l <- leaflet() %>% addCouncilStyle()
+
+names(map_list2) %>%
+  purrr::walk(function (df) {
+    l <<- l %>%
+      addPolygons(data=map_list2[[df]],
+              fillColor = ~pal(charge_p_bdg), 
+              color = ~pal(charge_p_bdg),
+              weight = 1, 
+              label = ~paste("Total Cost:", `total_cost`), 
+              group = df,
+              opacity = 1,
+              fillOpacity = .3)})
+l %>% 
+    addLegend(position = "bottomleft", pal = pal, values = map_sf$charge_p_bdg, title = "HWO Cost Adjusted <br> (Total Cost/N Buildings)") %>% 
+    addLayersControl(
+    baseGroups = c("2017", "2018","2019", "2020", "2021", "2022"),
+    options = layersControlOptions(collapsed = FALSE))
+  
+  
+```
+
+
+#### [Cost per building via open market orders]
+```{r echo=FALSE}
+omo <- fread("https://data.cityofnewyork.us/resource/mdbu-nrqn.csv?$limit=9999999")
+# subset to 2017-present
+omo[,omocreatedate:= as.Date(omocreatedate)]
+omo[, year_create := year(omocreatedate)]
+omo_sub <- omo[year_create>=2017, ]
+
+omo_sub_plut <- merge(omo_sub, pluto_sub)
+
+# totals by bdg 
+omo_sub_plut[, n_bdg := length(unique(omocreatedate)), by = .(bbl)]
+omo_sub_plut[, total_charg_bdg := sum(omoawardamount), by = .(bbl)]
+
+# total OMOs by year, year and council distr
+omo_sub_plut[, n_p_bdg:= length(unique(omocreatedate)), by = .(bbl)]
+omo_sub_plut[,  n_per_year_cd := sum(n_p_bdg), by = .(council_district, year_create)]
+omo_sub_plut[, award_per_year_cd:= sum(omoawardamount), by = .(council_district, year_create)]
+
+# normalize
+omo_sub_plut[, prop_n:= n_per_year_cd/n_bdgs_cd, by = .(council_district, year_create)]
+omo_sub_plut[, award_p_bdg:= award_per_year_cd/n_bdgs_cd, by=.(council_district, year_create)]
+
+mapdt <-  unique(omo_sub_plut[!is.na(council_district),.(council_district, prop_n = round(prop_n, 2), `Total Award` = award_per_year_cd, Year=year_create, award_p_bdg, n_per_year_cd, n_bdgs_cd)])  
+
+mapdt <- unique(mapdt)
+
+```
+
+
+```{r echo=FALSE}
+map_sf <- mapdt %>% 
+  left_join(cd_shp, by = "council_district") %>% 
+  st_as_sf() %>% 
+  st_transform(crs='+proj=longlat +datum=WGS84')
+
+setDT(map_sf); map_sf[, Year := as.character(Year)]
+map_list <- split(map_sf, map_sf$Year) 
+map_list2 <- lapply(map_list,st_as_sf)
+```
+
+
+```{r eval=FALSE}
+pal <- colorNumeric("RdBu", map_sf$prop_n)
+
+l2 <- leaflet() %>% addCouncilStyle()
+
+names(map_list2) %>%
+  purrr::walk(function(df) {
+    l2 <<- l2 %>%
+      addPolygons(data=map_list2[[df]],
+              fillColor = ~pal(prop_n), 
+              color = ~pal(prop_n),
+              weight = 1, 
+              label = ~paste("Total Number of OMO", n_per_year_cd), 
+              group = df,
+              opacity = 1,
+              fillOpacity = .3)})
+l2 %>% 
+    addLegend(position = "bottomleft", pal = pal, values = map_sf$prop_n, title = "Proportion of Bdgs with OMOs") %>% 
+    addLayersControl(
+    baseGroups = c("2017", "2018","2019", "2020", "2021", "2022"),
+    options = layersControlOptions(collapsed = FALSE))
+```
+
+
+```{r echo=FALSE}
+pal <- colorNumeric("RdBu", map_sf$award_p_bdg, reverse = TRUE)
+
+l3 <- leaflet() %>% addCouncilStyle()
+
+names(map_list2) %>%
+  purrr::walk(function(df) {
+    l3 <<- l3 %>%
+      addPolygons(data=map_list2[[df]],
+              fillColor = ~pal(award_p_bdg), 
+              color = ~pal(award_p_bdg),
+              weight = 1, 
+              label = ~paste("Total Award:", scales::dollar(`Total Award`)), 
+              group = df,
+              opacity = 1,
+              fillOpacity = .2)}) 
+
+ l3 %>% addLegend(position = "bottomleft", pal = pal, values = map_sf$award_p_bdg, title = "") %>% addLayersControl(
+    baseGroups = c("2017", "2018","2019", "2020", "2021", "2022"),
+    options = layersControlOptions(collapsed = FALSE))
+
+```
+
+- Summary of charges per building for open market orders
+```{r echo=FALSE}
+sum_dt <- omo_sub_plut[, .(n_bdg, total_charg_bdg)]
+sum_dt <- unique(sum_dt)
+summary(sum_dt$n_bdg)
+omo[year_create>2017,.(`Total Charges` = sum(omoawardamount)), by="year_create"]
+```
+
+
+#### Total Number combined (HWO + OMO)
+- [Total Number of Buildings that have been through ERP >1: 6,155]
+- [One building has been through ERP 80 times]
+
+```{r echo=FALSE}
+# - 1930 duplicates matched on +/- 30 days btw date of start and less than $200 difference in cost
+omo1 <- omo_sub[!omoawardamount==0, ]
+omo1[, award_amount := sum(omoawardamount), by = .(bbl, omocreatedate)]
+omo1[, n_p_bdg := length(unique(omocreatedate)), by = "bbl"]
+omo2 <-omo1[,.(bbl, n_p_bdg, award_amount, omocreatedate)]
+omo2 <- unique(omo2)
+
+hwo1 <-hwo_sub[!hwostatusreason %in% c("OMO Completed", "Work Done by Others", "Work Too Extensive for HWO") & !chargeamount==0 & iscommercialdemolition %in% NA,  ]
+hwo2 <- hwo1[, cost_amount:= sum(chargeamount), by = .(hwocreatedate, bbl)]
+hwo2[, approv_amt := sum(hwoapprovedamount), by = .(bbl, hwocreatedate)]
+hwo2[, n_p_bdg := length(unique(hwocreatedate)), by = .(bbl)]
+hwo3 <- hwo2[,.(bbl, n_p_bdg, approv_amt, cost_amount, hwocreatedate)]
+hwo3 <- unique(hwo3)
+
+
+both <- merge(omo2, hwo3, by = "bbl", all=TRUE, allow.cartesian=TRUE)
+uniqs <- both[is.na(award_amount) | is.na(cost_amount), ]
+uniqs <- unique(uniqs)
+dups <- both[!uniqs]
+dups[, timebtw := abs(as.numeric(omocreatedate)-as.numeric(hwocreatedate))]
+dups[, costdiff := abs(award_amount-cost_amount)]
+dups1  <- dups[timebtw<=45 & costdiff<300, ]
+not_dups <- dups[!timebtw<=45 & !costdiff<300, ]
+
+omond <- not_dups[, .(bbl, cost = award_amount + cost_amount, date=omocreatedate, npg = n_p_bdg.x + n_p_bdg.y)]
+omond <- unique(omond)
+
+hwond<- not_dups[, .(bbl, cost = award_amount + cost_amount, date=hwocreatedate, npg = n_p_bdg.x + n_p_bdg.y)]
+hwond <- unique(hwond)
+
+omo_un <- uniqs[is.na(hwocreatedate), .(bbl, cost=award_amount, date=omocreatedate, npg=n_p_bdg.x)]
+omo_un <- unique(omo_un)
+
+hwo_un <- uniqs[!is.na(hwocreatedate), .(bbl, cost=cost_amount, date=hwocreatedate, npg=n_p_bdg.y)]
+hwo_un <- unique(hwo_un)
+erp1 <- rbind(hwo_un, omo_un, hwond, omond)
+# date is the only nonunique value by building
+bigerp <- unique(erp1[!is.na(bbl), ])
+
+bigerp[!is.na(bbl), npg_new := sum(npg), by = .(bbl)]
+bigerp[npg_new==295912, ]
+bigerpsum <- unique(bigerp[,.(bbl, npg_new)])
+summary(bigerpsum$npg_new)
+
+worst_erp <- bigerp[npg_new>196, .(bbl)]
+
+```
+
+#### HMCV summary of number of violations per building, number of violations issued over time
+```{r echo=FALSE}
+hmv <- fread("~/Desktop/housing_builds/HB_TPT/hmv_sub2.csv")[,-c(1,2)]
+
+hmv[, bbl:= as.character(bbl)]
+hmv[, inspectiondate := as.Date(inspectiondate)]
+hmv[, novissueddate := as.Date(novissueddate)]
+hmv[, currentstatusdate := as.Date(currentstatusdate)]
+hmv_sub <- hmv[novissueddate>=as.Date("2016-01-01") & !currentstatus %in% "VIOLATION DISMISSED", .(novissueddate, bbl, class, latitude, longitude, inspectiondate)]
+
+# make bbl
+hmv[boro %in% "QUEENS", boro := 4]
+hmv[boro %in% "BROOKLYN", boro := 3]
+hmv[boro %in% "MANHATTAN", boro := 1]
+hmv[boro %in% "BRONX", boro := 2]
+
+# let's pad the strings 
+hmv[, block := str_pad(block, 5, "left", pad = 0)]
+hmv[, lot := str_pad(lot, 4, "left", pad = 0)]
+
+# make bbl 
+hmv[, bbl := paste(boro, block, lot, sep = "")]
+
+hmv_sub <- unique(hmv_sub)
+hmv_sub[, n_vios := .N, by = "bbl"]
+hmv_sub[, year_:= year(inspectiondate)]
+hmv_sub[, npd_final:= length(unique(bbl)), by = .(inspectiondate)]
+
+hmv_sub[, n_vios_class := .N, by = c("class", "bbl")]
+# summary(hmv_sub$n_vios)
+
+plotdf <-unique(hmv_sub[inspectiondate >=as.Date("2017-01-01") &npd_final<2000, .(npd_final,date=inspectiondate)])
+
+ggplot(hmv_sub, aes(x=n_vios)) + geom_histogram() + theme_bw() + xlab("Number of Violations") + scale_y_continuous(labels = scales::comma) 
+
+ggplot(plotdf, aes(x=date,  y=npd_final)) + geom_point() + geom_smooth(se=FALSE, span=.25) + scale_x_date(labels = scales::date_format("%Y-%m-%d"), date_breaks = "6 months") + theme(axis.text.x=element_text(angle=45, hjust=1)) + scale_y_continuous(labels = scales::comma) + ylab("N violations")
+
+# for joining
+worst_hmv <- hmv_sub[n_vios>=260, .(novissueddate, n_vios, bbl, bbl, latitude, longitude, n_vios_class)]
+# for mapping
+map_dt <- worst_hmv[, .(n_vios, latitude, longitude)]
+map_dt <- unique(map_dt)
+```
+
+#### For housing maintenance code violations, where are the worst actors (more thann 260 violations)?
+
+```{r echo=FALSE}
+pal <- colorNumeric("RdBu", map_dt$n_vios, reverse = TRUE)
+l <- leaflet() %>% addCouncilStyle()
+l %>% addCircles(data = worst_hmv,
+             lng=map_dt$longitude,
+             lat=map_dt$latitude,
+             color = ~pal(n_vios), 
+             label = ~paste(n_vios),
+            # popup = ~popup
+             weight = 4,
+             opacity = .3, 
+             radius = 1.5) %>% 
+   addLegend(position = "bottomleft", pal = pal, values = map_dt$n_vios, title = "Buildings with violations <br> > 75 perentile")
+  
+```
+                
+```{r echo=FALSE}
+library(stringr)
+# complaints and problems with the complaints 
+comp_probs <- fread("https://data.cityofnewyork.us/resource/a2nx-4u46.csv?$limit=999999")
+comp <- fread("https://data.cityofnewyork.us/resource/uwyv-629c.csv?$limit=99999999")
+comp[, receiveddate:= as.Date(receiveddate)]
+
+# make bbl
+comp[borough %in% "QUEENS", boro := 4]
+comp[borough %in% "BROOKLYN", boro := 3]
+comp[borough %in% "MANHATTAN", boro := 1]
+comp[borough %in% "BRONX", boro := 2]
+
+# let's pad the strings 
+comp[, block := str_pad(block, 5, "left", pad = 0)]
+comp[, lot := str_pad(lot, 4, "left", pad = 0)]
+
+# make bbl 
+comp[, bbl := paste(boro, block, lot, sep = "")]
+
+```
+
+
+```{r echo=FALSE}
+
+erpdt <- bigerp[, .(bbl=as.character(bbl), date, cost)]
+
+comp_sub <- comp[bbl %in% erpdt$bbl, .(bbl, receiveddate)]
+comp_sub <- unique(comp_sub)
+erp_comps <- merge(erpdt, comp_sub, by="bbl", allow.cartesian = TRUE)
+erp_comps[, after_disch := ifelse(receiveddate>date, 1, 0)]
+# erp_comps[as.numeric(receiveddate)>as.numeric(date), .(n=sum(after_disch)), by="bbl"][order(n, decreasing = TRUE)][1:10]
+
+
+```
+
+
+```{r eval=FALSE}
+hwo[isaep %in% "AEP", .(n=length(unique(bbl)))]
+omo[isaep %in% "AEP",.(n=length(unique(bbl)))]
+# general length of time before 
+```
+
+#### AEP
+- 386 buildings have been through AEP more than once.
+```{r echo=FALSE}
+aep <- fread("https://data.cityofnewyork.us/resource/hcir-3275.csv?$limit=999999")
+setnames(aep, "building_id", "buildingid")
+aep[, aep_start_date:= as.Date(aep_start_date)]
+aep[, aep_discharge_date := as.Date(discharge_date)]
+aep[, bbl := as.character(bbl)]
+
+aep[, Duration:= as.numeric(aep_discharge_date-aep_start_date)]
+aep_worst <- aep[, .N, by ="bbl"][order(N, decreasing = TRUE)][N>1, .(bbl)]
+
+sum_aep <- aep[, .N, by ="bbl"][order(N, decreasing = TRUE)]
+sum_aep <- unique(sum_aep)
+summary(sum_aep$N)
+worst_aep_mult <- sum_aep[,.(unique(bbl))]
+```
+
+
+```{r echo=FALSE}
+##### [Number of complaints received after being dishcarged for the top 20 buildings]
+# did AEP impact complaints/violations
+aep_disch <- aep[current_status %in% "AEP Discharged", ]
+
+aep_disch_sub <- aep_disch[, .(bbl,of_b_c_violations_at_start, disch_date = as.Date(discharge_date))]
+aep_comp <- merge(aep_disch_sub, comp_sub, by = "bbl")
+
+
+
+aep_comp[, after_disch := as.numeric(ifelse(disch_date<receiveddate, 1, 0))]
+
+aep_comp[, n_after := sum(after_disch), by = "bbl"]
+aep_comp[, n_total := length(unique(receiveddate)), by = "bbl"]
+
+post_aep_comp <- aep_comp[, .(bbl, n_after)]
+post_aep_comp <- unique(post_aep_comp)
+#post_aep_comp[order(n_after, decreasing = TRUE)][1:20]
+#summary(post_aep_comp$n_after)
+
+```
+
+##### Number of violations after being discharged
+```{r echo=FALSE}
+hmv_aep1 <- hmv_sub[bbl %in% aep$bbl, ]
+hmv_aep1 <- hmv_aep1[!is.na(bbl), ]
+hmv_aep1[,npb := length(unique(novissueddate)), by =.(bbl)]
+
+hmv_aep2 <- merge(aep[, .(bbl, disch_date = as.Date(discharge_date))], hmv_aep1[, .(bbl, novissueddate, npb)], by= "bbl",  no.dups = TRUE, allow.cartesian = TRUE)
+
+hmv_aep2 <- unique(hmv_aep2[!is.na(bbl), ])
+
+hmv_aep2[, after_disch_vios := as.numeric(disch_date)<as.numeric(novissueddate), by = "bbl"]
+
+hmv_aep2[,n_total := length(unique(novissueddate)), by="bbl"]
+hmv_aep2[, prop_after := after_disch_vios/n_total, by = "bbl"]
+
+DT::datatable(unique(hmv_aep2[!bbl %in% NA & prop_after>0,.(bbl, `prop of vios after discharge`=round(prop_after, 2))]))
+summary(hmv_aep2$prop_after)
+
+#,worst_aep <- post_vios[n>=29, .(unique(bbl))]
+```
+
+
+
+#### Housing litigation data
+- Breakdown, total number of cases broken down by case 'type' (7A, CONH, tenant driven, etc)
+```{r echo=FALSE}
+# There are many blanks in the respondent column 
+# how many since 2017
+hl <- fread("https://data.cityofnewyork.us/resource/59kj-x8nc.csv?$where=caseopendate>='2017-01-01'&$limit=999999999999")
+hl[, case_date := as.Date(caseopendate)]
+hl[,bbl:=as.character(bbl)]
+hl <- hl[case_date < as.Date(Sys.time()), ]
+hl[,.N, by= c("casetype")]
+hl[, .N, by=c("bbl", "respondent")][order(N, decreasing = TRUE)][N>2]
+# # merge with violations - add date
+
+hl_hmv <- merge(hmv_sub[bbl %in% hl$bbl,.(latitude, longitude,bbl, class, novissueddate)],hl, by = "bbl",allow.cartesian=TRUE)
+```
+
+- Respondants that have been through litigation more than once
+```{r echo=FALSE}
+hl_hmv1 <- hl_hmv[!is.na(bbl), .(bbl, class, novissueddate, case_date, casetype, respondent)]
+hl_hmv1 <- unique(hl_hmv1)
+hl_hmv1[as.numeric(case_date) < as.numeric(novissueddate), n_post := length(unique(novissueddate)), by="bbl"]
+hl_hmv1[,n_total:= length(unique(novissueddate)), by = "bbl"]
+DT::datatable(unique(hl_hmv1[,.(bbl, n_total, n_post),]))
+```
+
+- 21,984 unique buildings had violations after being taken through litigation
+- 25 % of those buildings have acrrued more than 69 violations post housing litigation
+```{r echo=FALSE}
+hl_hmvsum <- unique(hl_hmv1[,.(bbl, n_post, novissueddate)])
+
+summary(hl_hmvsum$n_post)
+hl_worst <- hl_hmvsum[n_post>69, .(unique(bbl))]
+
+```
+
+
+#### Did 7A impact the number of complaints or violations?
+- 97 buildings in the HL dataset were ordered administrator via 7A
+- 89 of those buildings continued to receive violations 
+- The max number of violations for a building in these data is 254
+```{r echo=TRUE}
+# use https://data.cityofnewyork.us/Housing-Development/Housing-Maintenance-Code-Complaints/uwyv-629c
+seva <- hl_hmv1[casetype %in% "7A", .(bbl, n_total, n_post)]
+seva <- unique(seva)
+seva_sum <- unique(seva[,.(n_post)])
+DT::datatable(seva)
+summary(seva_sum$n_post)
+
+worst_7a <- seva[n_post>70, .(unique(bbl))]
+```
+
+#### CONH
+#### Did CONH impact the number of complaints or violations?
+- 635 buildings CONH in HL
+- 395 of those buildings continued to receive violations after going through CONH litigation
+- The max number of violations for a building in these data is 148
+```{r echo=FALSE}
+
+conh <- hl_hmv1[casetype %in% "CONH", .(bbl, n_total, n_post)]
+conh <- unique(conh)
+
+summary(unique(conh$n_post))
+DT::datatable(conh)
+# conh[, .(bbl, respondent)]
+
+### what about the pilot?
+```
+
+
+#### Who are the worst actors
+- BBLs and the number of programs they have been through (AEP, ERP)/if they stand out in housing litigation (multiple cases) or HMCV (many violations)
+```{r echo=FALSE}
+hl_worst[, type:= "HL"]
+setnames(hl_worst, "V1", "bbl")
+aep_worst[, type:= "AEP"]
+worst_aep_mult[,type:= "mult aep"]
+setnames(worst_aep_mult, "V1", "bbl")
+worst_erp[, type:= "erp"]
+big_worst <- rbind(hl_worst, aep_worst, worst_aep_mult ,worst_erp[,.(bbl=as.character(bbl), type)])
+
+big_worst <- unique(big_worst)
+
+DT::datatable(big_worst)
+# write.csv("worst_bbls_and_programs.csv", big_worst)
+# big_worst[bbl %in% 2047120001, ]
+
+#big_worst[,length(unique(type)), by=.(bbl)][order(V1, decreasing = TRUE)][1:10]
+
+```
+
+
+
+```{r eval=FALSE}
+#### [Who are the owners and how many buildings do they own] (https://data.cityofnewyork.us/City-Government/Property-Valuation-and-Assessment-Data/yjxr-fw8i/data)
+pv <- fread("https://data.cityofnewyork.us/resource/8y4t-faws.csv?$limit=99999999") 
+
+pv[parid %in% big_worst$bbl,.N, by = .(owner) ]
+
+# aep_check <- worst_aep_mult[,.(bbl=unique(bbl))]
+# owners <- pv[parid %in% aep_check$bbl,.N, by = .(owner) ][order(N, decreasing = TRUE)]
+
+pv[owner %in% "MERCY HOLDING LLC", ]
+pv[owner %in% "EASTCHESTER HEIGHTS PROPERTY OWNER LLC", .(parid)]
+# pv[,.N, by= "owner"][order(N,decreasing = TRUE)][1:60]
+
+write.csv(owners, "badowners.csv")
+
+### for james just fix scrape
+# resps <- hl[!respondent %in% "",.(respondent)]
+# resps2 <- strsplit(resps$respondent, ",")
+# resps3 <- lapply(resps2, function(x) gsub("ET AL", "", x))
+# resps4 <- lapply(resps3, function (x) trimws(x, which = "both"))
+# write.csv(unlist(resps4), "justfixscrape_hl.csv")
+```
+
+
+
