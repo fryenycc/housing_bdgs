@@ -1,0 +1,286 @@
+---
+title: "tpt_final"
+author: "Brook Frye"
+date: "3/10/2020"
+output: html_document
+---
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# read in the data
+library(data.table)
+library(ggplot2)
+library(leaflet)
+library(sf)
+library(councildown)
+library(survival)
+library(survminer)
+library(stringr)
+library(data.table)
+library(readxl)
+library(knitr)
+library(readr)
+library(data.table)
+library(httr)
+source("code/get_lat_lon.R")
+source("code/lien_clean_agg.R")
+
+# add to this 
+# data sources: https://data.cityofnewyork.us/City-Government/Property-Exemption-Detail/muvi-b6kx
+
+# read in aep data, check it out, make sure that it's good 
+hmcv <- fread("data/hmcv.csv")
+aep <- fread("https://data.cityofnewyork.us/resource/hcir-3275.csv?$limit=99999")
+tpt <- readxl::read_excel("~/Desktop/housing_builds/HPD Lien/AEP/data/tpt.xlsx")
+tpt_admin <- read_excel("~/Desktop/housing_builds/HPD Lien/AEP/data/admin_tpt.xlsx")
+setDT(tpt_admin); setDT(tpt)
+
+names(tpt_admin) <- as.character(tpt_admin[1, ])
+tpt_admin <- tpt_admin[-1, ] 
+
+bc <- hmcv[class %in% c("B", "C"), ]
+
+# subset to the open violations/clean/make vars
+bc <- bc[violationstatus %in% "Open", ]
+bc[, novissueddate := as.Date(novissueddate)]
+bc[, .N, by = c("bbl")][order(N, decreasing = TRUE)]
+
+bc[, add := paste(housenumber, streetname)]
+bc[,  address := paste(housenumber, streetname, zip)]
+bc[, address_apt:= paste(apartment, address, sep = " ")]
+bc[, bbl := as.character(bbl)]
+c <- bc[class %in% "C", ]
+
+
+# aep clean 
+aep[, aep_start_date := as.Date(aep_start_date)]
+aep[, discharge_date := as.Date(discharge_date)]
+aep[, address := paste(phn, street_address, postcode)]
+aep[ , time_in_aep := discharge_date - aep_start_date, by = aep_round]
+aep[, days_in_aep := as.numeric(time_in_aep)]
+aep[total_units > 5 & total_units <= 14, units_char:= "Btwn 6 and 14" ]
+aep[total_units<= 5, units_char:= "5 or less" ]
+aep[total_units > 14, units_char:= "15 or more" ]
+aep[, units_char:= factor(units_char, levels = c("5 or less", 
+                                                    "Btwn 6 and 14", 
+                                                    "15 or more"))]
+
+
+aep[, num_aep := .N,  by = "address"]
+aep[, bbl := as.character(bbl)]
+
+aep_bc <- merge(aep, bc, by = c("address", "bbl"))
+aep_bc <- aep_bc[, .(address, aep_start_date, discharge_date, latitude = latitude.x,
+                     longitude = longitude.x, violationid, currentstatus, 
+                     total_units, num_aep, novissueddate, violationstatus,
+                     aep_round, units_char, of_b_c_violations_at_start)]
+
+aep_bc <- aep_bc[novissueddate > aep_start_date, ]
+aep_bc[, n_vios:=length(unique(violationid)), by = "address"]
+
+rnd_12 <- aep[aep_round %in% "Aep Round 12", .N, by = "units_char"]
+rnd_12[units_char %in% "10 or less", ]
+
+
+
+tpt[Borough %in% "QUEENS", boro := 4]
+tpt[Borough %in% "BROOKLYN", boro := 3]
+tpt[Borough %in% "MANHATTAN", boro := 1]
+tpt[Borough %in% "BRONX", boro := 2]
+
+# let's pad the strings 
+tpt[, block := str_pad(Block, 5, "left", pad = 0)]
+tpt[, lot := str_pad(Lot, 4, "left", pad = 0)]
+
+# make bbl 
+tpt[, bbl := paste(boro, block, lot, sep = "")]
+tax_exem <- fread("https://data.cityofnewyork.us/resource/muvi-b6kx.csv?$limit=9999999")
+tax_exem[, bbl := parid]
+
+pluto <- fread("data/pluto_19v1.csv")
+pluto[, bbl := as.character(bbl)]
+
+# what do we need from pluto 
+pluto_sub <- pluto[, .(bbl, unitsres)]
+# pluto_sub[, address := paste(address, zipcode, sep=" ")]
+
+ # maybe get bbl 
+# bc[grep("Davidson", address, ignore.case = TRUE), unique(address)]
+
+# subset to 5129 
+damp <- tax_exem[exmp_code %in% "5129", ] # if we are interested in the number of 
+```
+
+
+#### what is the distribution of open b & c violations for properties that have been selected tpt (admin file)
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+```
+
+#### what is the distribution of (open) b & c violations for properties that have gone through tpt (tolani file)
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+```
+
+
+#### what is the distribution of open b&c violations for the entire city, normalized by units, broken up by size  
+```{r echo=FALSE}
+# bring in pluto data to get units
+bc_pluto <- merge(bc, pluto_sub, by = "bbl")
+bc_pluto[, n_vios := length(unique(violationid)), by = "address"]
+
+bc_pluto <- bc_pluto[unitsres>=3, ]
+
+setnames(bc_pluto, "unitsres", "total_units")
+# let's break up by size of building
+
+bc_pluto[total_units > 5 & total_units <= 14, units_char:= "Btwn 6 and 14" ]
+bc_pluto[total_units<= 5, units_char:= "5 or less" ]
+bc_pluto[total_units > 14, units_char:= "15 or more" ]
+bc_pluto[, units_char:= factor(units_char, levels = c("5 or less", 
+                                                    "Btwn 6 and 14", 
+                                                    "15 or more"))]
+
+
+
+bc_pluto[, n_vios_norm := n_vios/total_units]
+
+dt <- unique(bc_pluto[, .(address, n_vios_norm, n_vios, units_char, total_units)])
+
+dt <- unique(dt)
+ggplot(dt, aes(x=n_vios)) + geom_histogram()
+summary(dt$n_vios)
+
+ggplot(dt[units_char %in% "5 or less", ], aes(x=n_vios_norm)) + geom_histogram() + ggtitle("Norm Viols for 5 or less")
+dt[units_char %in% "5 or less", summary(n_vios_norm)]
+
+ggplot(dt[units_char %in% "Btwn 6 and 14", ], aes(x=n_vios_norm)) + geom_histogram() + ggtitle("Norm Viols for Btwn 6 and 14")
+
+dt[units_char %in% "Btwn 6 and 14", summary(n_vios_norm)]
+
+ggplot(dt[units_char %in% "15 or more", ], aes(x=n_vios_norm)) + geom_histogram() + ggtitle("Norm Viols for 15 or more")
+dt[units_char %in% "15 or more", summary(n_vios_norm)]
+```
+
+#### What is the 80th percentile?
+Which properties are in the 75th percentile of this distribution?
+```{r echo=FALSE}
+small <- dt[units_char %in% "10 or less", ]
+med <- dt[units_char %in% "Btwn 11 and 30", ]
+large <- dt[units_char %in% "30 or more", ]
+```
+
+#### Small buildings
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(ecdf(small$n_vios_norm))
+quantile(small$n_vios_norm, .80)
+```
+
+#### Medium buildings
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(ecdf(med$n_vios_norm))
+quantile(med$n_vios_norm, .80)
+```
+
+#### Large buildings
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot(ecdf(large$n_vios_norm))
+quantile(large$n_vios_norm, .80)
+```
+
+
+#### Let's subset to the buildings that are beyond these thresholds (the 80th percentile)
+```{r}
+lg_80 <- quantile(large$n_vios_norm, .80)
+med_80 <- quantile(med$n_vios_norm, .80)
+small_80 <- quantile(small$n_vios_norm, .80)
+
+lg_adds <- large[n_vios_norm > lg_80, unique(address)]
+med_adds <- med[n_vios_norm > med_80, unique(address)]
+sm_adds <- small[n_vios_norm > small_80, unique(address)]
+
+all_adds <- c(lg_adds, med_adds, sm_adds)
+worst <- bc_pluto[address %in% all_adds, ]
+ggplot(worst, aes(x=n_vios)) + geom_histogram() + facet_wrap(~units_char)
+
+# ggplot(worst, aes(x=total_units)) + geom_histogram()
+# what is going on - why are we capturing so many 0-5 
+
+worst[n_vios_norm < 1, unique(n_vios)]
+
+```
+
+#### Have any been through TPT or AEP?
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+tpt[bbl %in% worst$bbl, ]
+tpt_admin[BBL %in% worst$bbl, unique(bbl)]
+aep[bbl %in% worst$bbl, unique(address)]
+```
+
+
+#### For these really bad buildings, let's look at lien data (not considering date of violation)
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+lien_sale_lists <- fread("https://data.cityofnewyork.us/resource/9rz4-mjek.csv?$limit=99999")
+
+lien_sale_lists[, block := str_pad(block, 5, "left", pad = 0)]
+lien_sale_lists[, lot := str_pad(lot, 4, "left", pad = 0)]
+lien_sale_lists[, bbl := paste(borough, block, lot, sep = "")]
+
+# can we figiure out what we are missing 
+# lets look at the distribution of liens 
+liens_all[, bbl := as.character(bbl)]
+liens_all[, tot_chg := as.numeric(`Total Charges`)]
+liens_sub <- liens_all[tot_chg > 57595.24, ]
+
+liens_amount <- merge(worst, liens_all, by = "bbl")
+
+ggplot(liens_amount, aes(x=tot_chg)) + geom_histogram()
+sub <- liens_amount[, .(tot_chg, n_vios_norm, bbl)]
+sub <- unique(sub)
+ggplot(sub, aes(x=n_vios_norm, y=tot_chg)) + geom_point()
+
+#remove outliers 
+sub <- sub[tot_chg < 5000000,]
+ggplot(sub, aes(x=n_vios_norm, y=tot_chg)) + geom_point() + scale_y_continuous(labels = scales::dollar)
+
+# let's check out that Davidson property from the city article 
+liens_all[grep("2201 Davidson", address, ignore.case = TRUE), ]
+worst[grep("2201 Davidson", address, ignore.case = TRUE), ]
+```
+
+
+#### Let's look at the distribution of b&c violations, value, liens for the TPT admin doc
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+tpt_admin[,bc18 := `Open B+C Violations (2018)`]
+tpt_admin[, bc18:=as.numeric(bc18)]
+ggplot(tpt_admin, aes(x=bc18)) + geom_histogram()
+plot(ecdf(tpt_admin$bc18))
+
+# per dwelling unit 
+tpt_admin[, units := as.numeric(`Dwelling Units`)]
+tpt_admin[, bc18_unit := bc18/units]
+plot(ecdf(tpt_admin$bc18_unit))
+quantile(tpt_admin$bc18_unit, .80, na.rm = TRUE)
+
+tpt_admin_sub <- tpt_admin[bc18_unit > 0, ]
+quantile(tpt_admin_sub$bc18_unit, .80, na.rm = TRUE)
+# ggplot(tpt_admin, aes())
+
+# let's just look at the eligible buildings 
+tpt_sub <- tpt_admin[`City Council vote` %in% "Approved", ]
+
+# let's look at the distribution of liens and market values from the admin 
+ggplot(tpt_sub, aes(x=units)) + geom_histogram()
+tpt_sub[, mark_val := as.numeric(`Market Value (2018)`)]
+ggplot(tpt_sub, aes(x=mark_val)) + geom_histogram() + scale_x_continuous(labels = scales::dollar)
+
+tpt_sub[, open_vios := as.numeric(`Open B+C Violations (2018)`)]
+
+ggplot(tpt_sub, aes(x=units, y=mark_val)) + geom_point()
+ggplot(tpt_sub, aes(x=units, y=open_vios)) + geom_point()
+
+```
+
+
+
+
